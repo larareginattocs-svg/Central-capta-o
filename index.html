@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -7,6 +8,11 @@
 <meta http-equiv="Expires" content="0">
 <title>Central de Inteligência de Captação</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
+<!-- Supabase (banco compartilhado). Fora do ambiente Cowork (ex: publicado no Render) este
+     script carrega normalmente. Dentro do artifact do Cowork ele pode ser bloqueado pela
+     política de scripts permitidos — o sistema detecta isso e cai automaticamente para o
+     modo local (localStorage), sem quebrar. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
 :root {
   color-scheme: light;
@@ -611,6 +617,50 @@ const STORAGE_KEY = 'captacao_oportunidades_v2';
 const DISMISSED_KEY = 'captacao_sugestoes_dispensadas_v1';
 
 // ---------------------------------------------------------------------------
+// Banco compartilhado (Supabase). Quando configurado e a biblioteca carrega
+// com sucesso, as oportunidades ficam salvas num banco na nuvem — todo mundo
+// que abre o link vê e edita os MESMOS dados, em tempo real. Se a biblioteca
+// não carregar (ex: dentro do preview do Cowork) ou as chaves não estiverem
+// configuradas, o sistema cai automaticamente para o modo local de sempre
+// (localStorage, dados só no navegador de quem está usando).
+const SUPABASE_URL = 'https://kyxnoxsihcibctrjnqie.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_lxsfuyhKfK_6V_NY2TAJVg_pUorBSul';
+const SUPABASE_TABLE = 'oportunidades';
+let sb = null;
+let supabaseReady = false;
+try {
+  if (window.supabase && typeof window.supabase.createClient === 'function' && SUPABASE_URL && SUPABASE_ANON_KEY) {
+    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    supabaseReady = true;
+  }
+} catch(e) {
+  console.warn('Supabase indisponível, usando armazenamento local neste navegador.', e);
+  supabaseReady = false;
+}
+function fromSupabaseRow(row){
+  // Os nomes das colunas no banco já usam os mesmos nomes de campo do app
+  // (camelCase entre aspas no SQL), então não precisa remapear nada — só
+  // garantir que os campos jsonb venham com um valor padrão se estiverem nulos.
+  return {
+    ...row,
+    aderenciaCriterios: row.aderenciaCriterios || null,
+    checklist: Array.isArray(row.checklist) ? row.checklist : [],
+    comentarios: Array.isArray(row.comentarios) ? row.comentarios : [],
+    historico: Array.isArray(row.historico) ? row.historico : [],
+  };
+}
+async function syncUpsert(o){
+  if (!supabaseReady) return;
+  const { error } = await sb.from(SUPABASE_TABLE).upsert(o);
+  if (error) console.error('Erro ao sincronizar com o banco compartilhado:', error);
+}
+async function syncDelete(id){
+  if (!supabaseReady) return;
+  const { error } = await sb.from(SUPABASE_TABLE).delete().eq('id', id);
+  if (error) console.error('Erro ao excluir no banco compartilhado:', error);
+}
+
+// ---------------------------------------------------------------------------
 // SUGGESTED_OPPS: lista de oportunidades encontradas pela varredura automática
 // (pesquisa na web). Um agente agendado reescreve este bloco a cada execução,
 // substituindo o conteúdo do array por oportunidades atuais de editais, emendas
@@ -780,6 +830,44 @@ const CATEGORIA_TIPOS = {
 
 const state = { opps: loadData(), currentTab: 'dashboard', sortKey: 'dataLimite', sortDir: 1, editingId: null, categoria: 'Todos' };
 saveData();
+
+// Se o banco compartilhado estiver disponível, busca os dados de lá (fonte da
+// verdade quando conectado) e, se o banco ainda estiver vazio mas já existirem
+// dados locais neste navegador, migra-os para o banco uma única vez.
+async function initSharedData(){
+  if (!supabaseReady) return;
+  try {
+    const { data, error } = await sb.from(SUPABASE_TABLE).select('*').order('criadoEm', { ascending: true });
+    if (error) { console.error('Erro ao carregar banco compartilhado:', error); return; }
+    if (data && data.length){
+      state.opps = data.map(fromSupabaseRow);
+    } else if (state.opps.length){
+      for (const o of state.opps){ await syncUpsert(o); }
+    }
+    saveData();
+    renderAll();
+    setupRealtime();
+  } catch(e){
+    console.error('Falha ao inicializar dados compartilhados:', e);
+  }
+}
+function setupRealtime(){
+  if (!supabaseReady) return;
+  sb.channel('oportunidades-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: SUPABASE_TABLE }, payload => {
+      if (payload.eventType === 'DELETE'){
+        state.opps = state.opps.filter(o => o.id !== payload.old.id);
+      } else {
+        const row = fromSupabaseRow(payload.new);
+        const idx = state.opps.findIndex(o => o.id === row.id);
+        if (idx === -1) state.opps.push(row); else state.opps[idx] = row;
+      }
+      saveData();
+      renderAll();
+    })
+    .subscribe();
+}
+initSharedData();
 
 function loadDismissed(){
   try { return JSON.parse(localStorage.getItem(DISMISSED_KEY) || '[]'); } catch(e){ return []; }
@@ -1306,15 +1394,18 @@ window.importSuggestion = function(encTitle){
   const s = SUGGESTED_OPPS.find(x => x.titulo === titulo);
   if (!s) return;
   const today = new Date().toISOString().slice(0,10);
-  state.opps.push({
+  const novaOpp = {
     id: uid(), titulo: s.titulo, resumo: s.resumo || '', tipo: s.tipo, financiador: s.financiador, area: s.area, regiao: s.regiao,
     abertura: s.abertura || '', limite: s.limite, prazoVerificado: s.prazoVerificado === true, valor: s.valor || 0, contrapartida: s.contrapartida || 'Não',
     aderencia: s.aderencia, status: 'Identificada', responsavel: '', link: s.link || '', inscricao: s.inscricao || '', notas: s.notas || '',
+    checklist: [], comentarios: [],
     criadoEm: today, atualizadoEm: today,
     historico: [{ data: today, de: null, para: 'Identificada' }],
-  });
+  };
+  state.opps.push(novaOpp);
   saveData();
   renderAll();
+  syncUpsert(novaOpp);
 };
 window.dismissSuggestion = function(encTitle){
   const titulo = decodeURIComponent(encTitle);
@@ -1375,6 +1466,10 @@ function renderUpdateBanner(){
     emailStatus = `<span class="email-status-off">✗ não conectado</span> — conecte o Gmail nos conectores do Cowork para ativar`;
   }
 
+  const dadosStatus = supabaseReady
+    ? `<span class="email-status-ok">✓ compartilhado</span> (mudanças visíveis para todo mundo que abre o link)`
+    : `<span class="email-status-off">✗ local neste navegador</span> (banco compartilhado não conectado nesta versão)`;
+
   document.getElementById('updateBanner').innerHTML = `
     <span class="dot"></span>
     <span>Atualização automática diária (15h) — última varredura em ${fmtDate(LAST_SCAN_DATE)}, próxima em ${fmtDataHora(proximaVarredura)}</span>
@@ -1382,6 +1477,8 @@ function renderUpdateBanner(){
     <span>Alerta diário de prazos às 7h30 — próximo em ${fmtDataHora(proximoAlerta)}</span>
     <span class="sep">·</span>
     <span>Lembrete semanal por e-mail: ${emailStatus}</span>
+    <span class="sep">·</span>
+    <span>Dados: ${dadosStatus}</span>
   `;
 }
 
@@ -1545,6 +1642,7 @@ document.getElementById('btnAddComentario').addEventListener('click', () => {
   coms.push({ data: new Date().toISOString(), autor, texto });
   state.opps[idx] = { ...state.opps[idx], comentarios: coms };
   saveData();
+  syncUpsert(state.opps[idx]);
   localStorage.setItem('captacao_ultimo_autor_v1', autor);
   document.getElementById('f_comentarioTexto').value = '';
   renderComentarios(state.opps[idx]);
@@ -1614,6 +1712,7 @@ form.addEventListener('submit', (e) => {
     checklist: editingChecklist.map(i => ({ texto: i.texto, feito: !!i.feito })),
     atualizadoEm: today,
   };
+  let savedOpp;
   if (state.editingId){
     const idx = state.opps.findIndex(o => o.id === state.editingId);
     const prev = state.opps[idx];
@@ -1622,21 +1721,26 @@ form.addEventListener('submit', (e) => {
       historico.push({ data: today, de: prev.status, para: data.status });
     }
     state.opps[idx] = { ...prev, ...data, historico };
+    savedOpp = state.opps[idx];
   } else {
-    state.opps.push({ id: uid(), criadoEm: today, historico: [{ data: today, de: null, para: data.status }], ...data });
+    savedOpp = { id: uid(), criadoEm: today, comentarios: [], historico: [{ data: today, de: null, para: data.status }], ...data };
+    state.opps.push(savedOpp);
   }
   saveData();
   closeModal();
   renderAll();
+  syncUpsert(savedOpp);
 });
 
 document.getElementById('btnDelete').addEventListener('click', () => {
   if (!state.editingId) return;
   if (!confirm('Excluir esta oportunidade?')) return;
-  state.opps = state.opps.filter(o => o.id !== state.editingId);
+  const deletedId = state.editingId;
+  state.opps = state.opps.filter(o => o.id !== deletedId);
   saveData();
   closeModal();
   renderAll();
+  syncDelete(deletedId);
 });
 
 /* ---------- Export CSV ---------- */
@@ -1714,6 +1818,7 @@ function importFromCSV(text){
   }
   const today = new Date().toISOString().slice(0,10);
   let importadas = 0, ignoradas = 0, avisos = [];
+  const novasOpps = [];
   for (let r = 1; r < rows.length; r++){
     const cells = rows[r];
     if (!cells || !cells.some(c => c.trim() !== '')) continue;
@@ -1734,7 +1839,7 @@ function importFromCSV(text){
     const prazoVerificadoRaw = get('prazoVerificado').toLowerCase();
     const prazoVerificado = ['sim','true','1','yes'].includes(prazoVerificadoRaw);
 
-    state.opps.push({
+    const novaOpp = {
       id: uid(),
       titulo, tipo, area, regiao, aderencia, status,
       resumo: get('resumo'),
@@ -1748,13 +1853,17 @@ function importFromCSV(text){
       link: get('link'),
       inscricao: get('inscricao'),
       notas: get('notas'),
+      checklist: [], comentarios: [],
       criadoEm: today, atualizadoEm: today,
       historico: [{ data: today, de: null, para: status }],
-    });
+    };
+    state.opps.push(novaOpp);
+    novasOpps.push(novaOpp);
     importadas++;
   }
   saveData();
   renderAll();
+  novasOpps.forEach(o => syncUpsert(o));
   let msg = `Importação concluída: ${importadas} oportunidade(s) adicionada(s).`;
   if (ignoradas) msg += ` ${ignoradas} linha(s) ignorada(s) por faltar título ou prazo.`;
   if (avisos.length) msg += `\n\nAvisos:\n${avisos.slice(0,5).join('\n')}`;
