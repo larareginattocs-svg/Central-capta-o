@@ -669,7 +669,7 @@ async function syncDelete(id){
 // (state.opps), que fica só em localStorage e é preservada entre execuções.
 // LAST_SCAN_DATE deve ser atualizado (formato AAAA-MM-DD) a cada execução.
 // ---------------------------------------------------------------------------
-const LAST_SCAN_DATE = '2026-08-17';
+let LAST_SCAN_DATE = '2026-08-17';
 // Marca de quando esta versão do artifact foi publicada (atualizado manualmente a cada
 // update_artifact). Ajuda quem abre o link compartilhado a confirmar se está vendo a
 // versão mais recente — se a data aqui parecer antiga, é só clicar em "Reload" no Cowork.
@@ -715,7 +715,12 @@ const FONTES = [
     { nome: 'Erasmus+ / EACEA (Comissão Europeia)', url: 'https://sport.ec.europa.eu/', desc: 'Chamadas europeias de esporte, incluindo os #BeActive EU Sport Awards.' },
   ]},
 ];
-const SUGGESTED_OPPS = [
+// Este array é o "modo local" (usado como sugestões iniciais e como fallback
+// quando o banco compartilhado não está disponível, ex: dentro do preview do
+// Cowork). Quando o Supabase está conectado, ele é substituído pelos dados
+// reais da tabela "sugestoes" logo depois do carregamento — ver
+// loadSharedSuggestions() mais abaixo.
+let SUGGESTED_OPPS = [
   { titulo:'#BeActive EU Sport Awards 2026', resumo:'Prêmio (não financia projeto novo) que reconhece iniciativas esportivas de destaque em 5 categorias — paz, inclusão, voluntariado, gerações e atividade física.', tipo:'Edital Internacional', financiador:'Comissão Europeia (EACEA) — Erasmus+ Sport', area:'Esporte', regiao:'Internacional', abertura:'2026-06-30', limite:'2026-09-17', prazoVerificado:true, valor:140000, contrapartida:'Não', aderencia:'Alta', link:'https://sport.ec.europa.eu/whats-new/news/beactive-eu-sport-awards-2026-apply-now', inscricao:'https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/erasmus-sport-2026-eu-awards-physical-activity', notas:'Prêmio (não é fomento a projeto): 5 categorias, €25.000 cada, fundo total €125.000. Confirmar câmbio atual. Inscrição só pelo Funding & Tenders Portal.' },
   { titulo:'Lei de Incentivo ao Esporte 2026 — Submissão de Projetos', resumo:'Renúncia fiscal federal: projetos esportivos aprovados passam a buscar patrocínio de empresas interessadas em deduzir Imposto de Renda. Cobre todas as manifestações do esporte (educacional, participação e rendimento).', tipo:'Edital Nacional', financiador:'Ministério do Esporte', area:'Esporte', regiao:'Nacional', abertura:'2026-03-02', limite:'2026-10-16', prazoVerificado:false, valor:300000, contrapartida:'Não', aderencia:'Muito Alta', link:'https://www.gov.br/esporte/pt-br/acesso-a-informacao/emendas-parlamentares', inscricao:'https://www.gov.br/esporte/pt-br/acoes-e-programas/lei-de-incentivo-ao-esporte', notas:'Protocolo de submissão aberto até 16/10/2026. Após aprovação, captação de patrocínio em até 2 anos improrrogáveis. Submissão via Sistema da Lei de Incentivo (SLI).' },
   { titulo:'Edital de Formação MROSC 2026 — Gestão de Parcerias com OSCs', resumo:'Seleciona UMA organização para capacitar outras OSCs em gestão de parcerias com o poder público — é fortalecimento institucional, não financiamento de projeto de ponta a ponta.', tipo:'Chamamento Público', financiador:'Secretaria-Geral da Presidência da República', area:'Outro', regiao:'Nacional', abertura:'', limite:'2026-10-31', prazoVerificado:true, valor:0, contrapartida:'Não', aderencia:'Média', link:'https://observatorio3setor.org.br/governo-federal-lanca-edital-para-capacitar-oscs-em-gestao-de-parcerias/', inscricao:'Canal de submissão não confirmado na fonte — checar o texto oficial do edital.', notas:'Fortalecimento institucional (capacitação em gestão de parcerias), não é fomento direto a projetos.' },
@@ -866,8 +871,34 @@ function setupRealtime(){
       renderAll();
     })
     .subscribe();
+  // Sugestões da varredura automática: quando a tarefa agendada escreve novas
+  // sugestões direto no banco, todo mundo com o painel aberto vê na hora.
+  sb.channel('sugestoes-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'sugestoes' }, () => {
+      loadSharedSuggestions();
+    })
+    .subscribe();
+}
+// Busca as sugestões da varredura automática e a data da última execução
+// direto do banco compartilhado. Se o banco não estiver disponível, o array
+// estático SUGGESTED_OPPS (definido mais acima) continua valendo como está.
+async function loadSharedSuggestions(){
+  if (!supabaseReady) return;
+  try {
+    const [{ data: sugs, error: errSugs }, { data: meta, error: errMeta }] = await Promise.all([
+      sb.from('sugestoes').select('*').order('criadoEm', { ascending: false }),
+      sb.from('sistema_meta').select('*').eq('chave', 'ultima_varredura').maybeSingle(),
+    ]);
+    if (errSugs) { console.error('Erro ao carregar sugestões compartilhadas:', errSugs); return; }
+    if (sugs) SUGGESTED_OPPS = sugs;
+    if (!errMeta && meta && meta.valor) LAST_SCAN_DATE = meta.valor;
+    renderAll();
+  } catch(e){
+    console.error('Falha ao carregar sugestões compartilhadas:', e);
+  }
 }
 initSharedData();
+loadSharedSuggestions();
 
 function loadDismissed(){
   try { return JSON.parse(localStorage.getItem(DISMISSED_KEY) || '[]'); } catch(e){ return []; }
