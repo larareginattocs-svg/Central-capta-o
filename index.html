@@ -250,8 +250,9 @@ table.opp-table tbody tr:last-child td { border-bottom: none; }
 [data-theme="dark"] .badge { filter: brightness(1.12) saturate(1.15); box-shadow: 0 0 0 1px rgba(255,255,255,0.08) inset; }
 /* Permissões: quem não é admin não vê o botão de excluir (o banco também bloqueia via RLS). */
 body.is-viewer #btnDelete { display: none !important; }
-.viewer-badge { display: none; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; background: var(--gray-200); color: var(--gray-600); padding: 2px 8px; border-radius: 999px; margin-left: 6px; }
-body.is-viewer .viewer-badge { display: inline-block; }
+.viewer-badge { display: none; align-items: center; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; background: var(--gray-200); color: var(--gray-600); padding: 2px 8px; border-radius: 999px; margin-left: 6px; line-height: 1.6; }
+body.is-viewer .viewer-badge { display: inline-flex; }
+.logged-user-label { display: inline-flex; align-items: center; }
 :focus-visible { outline: 2.5px solid var(--brand-purple, #8e2fd2); outline-offset: 2px; }
 a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, .tab-btn:focus-visible, .cat-btn:focus-visible { outline: 2.5px solid var(--brand-purple, #8e2fd2); outline-offset: 2px; }
 .badge-tipo { background: #eef2ff; color: #4338ca; }
@@ -440,7 +441,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
         <p class="sub" id="publishedInfo" style="font-size:10.5px;color:var(--gray-400);"></p>
       </div>
     </div>
-    <div style="display:flex; gap:8px;">
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
       <button class="btn btn-ghost" id="btnImport">Importar CSV</button>
       <input type="file" id="fileImport" accept=".csv,text/csv" style="display:none;">
       <button class="btn btn-ghost" id="btnExport">Exportar CSV</button>
