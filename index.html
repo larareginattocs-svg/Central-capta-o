@@ -955,7 +955,7 @@ let SUGGESTED_OPPS = [
 // uma janela histórica típica de abertura, para fins de planejamento. Nunca
 // viram "oportunidades" (não entram em state.opps, não contam pra alertas).
 // ---------------------------------------------------------------------------
-const WATCHLIST_2027 = [
+let WATCHLIST_2027 = [
   { titulo:'Edital Itaú Esporte (8ª edição)', financiador:'Itaú Unibanco', area:'Esporte', janelaTipica:'Costuma abrir em junho/julho, com inscrições até início de agosto (a 7ª edição, 2025, foi até 01/08).', valorReferencia:'~R$ 32 milhões no total (referência da edição 2025).', link:'https://www.itausocial.org.br/editais/' },
   { titulo:'Seleção Petrobras Esportiva/Cultural (próxima edição)', financiador:'Petrobras', area:'Esporte e Cultura', janelaTipica:'A Seleção Cultural 2026 abriu em julho e fechou em 31/07/2026 — padrão similar esperado para 2027.', valorReferencia:'~R$ 270 milhões no total (referência 2026, cultura+afins).', link:'https://petrobras.com.br/cultural/selecoes-publicas-culturais' },
   { titulo:'PROESPORTE — Lei de Incentivo ao Esporte do Paraná (próximo edital)', financiador:'Secretaria do Esporte do Paraná', area:'Esporte', janelaTipica:'O Edital 06 (2026) abriu 17/fev e fechou 17/abr — padrão similar esperado no início de 2027.', valorReferencia:'R$ 50 milhões (edital 2026, cobrindo execução em 2026 e 2027).', link:'https://www.esporte.pr.gov.br/Pagina/Proesporte-Lei-de-Incentivo' },
@@ -1085,6 +1085,13 @@ function setupRealtime(){
       loadSharedSuggestions();
     })
     .subscribe();
+  // Watchlist ("Editais para observar"): quando a tarefa agendada atualiza a
+  // lista no banco, todo mundo com o painel aberto vê na hora.
+  sb.channel('watchlist-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'watchlist' }, () => {
+      loadSharedWatchlist();
+    })
+    .subscribe();
 }
 // Busca as sugestões da varredura automática e a data da última execução
 // direto do banco compartilhado. Se o banco não estiver disponível, o array
@@ -1104,6 +1111,21 @@ async function loadSharedSuggestions(){
     console.error('Falha ao carregar sugestões compartilhadas:', e);
   }
 }
+// "Editais para observar": editais recorrentes cuja próxima edição ainda não
+// foi anunciada. A tarefa diária de varredura também atualiza essa lista no
+// banco — se não houver banco disponível, mantém a lista estática do código
+// como está (a mesma lógica de fallback usada nas sugestões).
+async function loadSharedWatchlist(){
+  if (!supabaseReady) return;
+  try {
+    const { data, error } = await sb.from('watchlist').select('*').order('titulo', { ascending: true });
+    if (error) { console.error('Erro ao carregar watchlist compartilhada:', error); return; }
+    if (data) WATCHLIST_2027 = data;
+    renderAll();
+  } catch(e){
+    console.error('Falha ao carregar watchlist compartilhada:', e);
+  }
+}
 // ---------------------------------------------------------------------------
 // Login (Supabase Auth). Se o banco compartilhado não estiver disponível
 // (ex: preview dentro do Cowork), não há como checar login — o sistema libera
@@ -1113,6 +1135,7 @@ async function loadSharedSuggestions(){
 function bootAppData(){
   initSharedData();
   loadSharedSuggestions();
+  loadSharedWatchlist();
 }
 async function initAuthGate(){
   if (!supabaseReady){
