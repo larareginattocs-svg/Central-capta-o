@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -267,6 +266,20 @@ table.opp-table tr:hover td { background: var(--gray-50); }
 .tag-chip { display:inline-flex; align-items:center; gap:4px; background: var(--gray-100); border-radius:999px; padding: 3px 8px 3px 10px; font-size: 12px; margin: 2px 4px 2px 0;}
 .tag-chip button { border:none; background:none; cursor:pointer; color: var(--gray-500); font-size: 13px; }
 
+.login-gate {
+  position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, rgba(170,76,222,0.10) 0%, rgba(142,47,210,0.10) 50%, rgba(100,48,244,0.10) 100%), var(--gray-50);
+  padding: 20px;
+}
+.login-box { background: #fff; border-radius: 16px; padding: 32px 30px; width: 100%; max-width: 360px; box-shadow: 0 10px 40px rgba(100,48,244,0.12); border: 1px solid var(--gray-200); }
+.login-box h2 { margin: 0 0 6px; font-size: 18px; background: var(--brand-gradient); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.login-sub { font-size: 12.5px; color: var(--gray-500); margin: 0 0 18px; }
+.login-box label { font-size: 12px; font-weight: 700; color: var(--gray-600); display: block; margin: 12px 0 4px; }
+.login-box input { width: 100%; border: 1px solid var(--gray-300); border-radius: 7px; padding: 9px 11px; font-size: 13.5px; font-family: inherit; }
+.login-error { margin-top: 10px; font-size: 12px; color: var(--red); background: #fef2f2; border: 1px solid #fecaca; border-radius: 7px; padding: 8px 10px; }
+.login-hint { font-size: 11.5px; color: var(--gray-400); margin: 16px 0 0; text-align: center; }
+.logged-user-label { font-size: 11.5px; color: var(--gray-500); align-self: center; margin-left: 4px; }
+
 .empty-state { text-align: center; padding: 40px 10px; color: var(--gray-400); }
 
 .footer-note { font-size: 11.5px; color: var(--gray-400); margin-top: 24px; text-align: center; }
@@ -278,7 +291,24 @@ table.opp-table tr:hover td { background: var(--gray-50); }
 </head>
 <body>
 <div class="brand-topbar"></div>
-<div class="app">
+
+<div class="login-gate" id="loginGate" style="display:none;">
+  <div class="login-box">
+    <h2>Central de Inteligência de Captação</h2>
+    <p class="login-sub">Entre com seu e-mail e senha para acessar o painel da Associação Encaminhando.</p>
+    <form id="loginForm">
+      <label>E-mail</label>
+      <input type="email" id="loginEmail" required autocomplete="username" placeholder="voce@exemplo.org">
+      <label>Senha</label>
+      <input type="password" id="loginSenha" required autocomplete="current-password" placeholder="••••••••">
+      <div class="login-error" id="loginError" style="display:none;"></div>
+      <button type="submit" class="btn btn-primary" id="loginSubmitBtn" style="width:100%;margin-top:6px;">Entrar</button>
+    </form>
+    <p class="login-hint">Não tem uma conta? Peça para quem administra o sistema criar seu acesso.</p>
+  </div>
+</div>
+
+<div class="app" id="appRoot" style="display:none;">
 
   <header class="topbar">
     <div class="brand-lockup">
@@ -295,6 +325,8 @@ table.opp-table tr:hover td { background: var(--gray-50); }
       <input type="file" id="fileImport" accept=".csv,text/csv" style="display:none;">
       <button class="btn btn-ghost" id="btnExport">Exportar CSV</button>
       <button class="btn btn-primary" id="btnNew">+ Nova oportunidade</button>
+      <span id="loggedUserLabel" class="logged-user-label"></span>
+      <button class="btn btn-ghost" id="btnLogout" title="Sair">Sair</button>
     </div>
   </header>
 
@@ -897,8 +929,75 @@ async function loadSharedSuggestions(){
     console.error('Falha ao carregar sugestões compartilhadas:', e);
   }
 }
-initSharedData();
-loadSharedSuggestions();
+// ---------------------------------------------------------------------------
+// Login (Supabase Auth). Se o banco compartilhado não estiver disponível
+// (ex: preview dentro do Cowork), não há como checar login — o sistema libera
+// o acesso direto em modo local, como sempre fez. Quando o banco está
+// disponível, ninguém vê nada do painel sem entrar com e-mail e senha.
+// ---------------------------------------------------------------------------
+function bootAppData(){
+  initSharedData();
+  loadSharedSuggestions();
+}
+async function initAuthGate(){
+  if (!supabaseReady){
+    // Sem banco compartilhado: não tem o que autenticar, libera direto.
+    document.getElementById('loginGate').style.display = 'none';
+    document.getElementById('appRoot').style.display = '';
+    bootAppData();
+    return;
+  }
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) {
+    onAuthenticated(session);
+  } else {
+    document.getElementById('loginGate').style.display = 'flex';
+    document.getElementById('appRoot').style.display = 'none';
+  }
+  sb.auth.onAuthStateChange((_event, session) => {
+    if (session) onAuthenticated(session); else showLoginGate();
+  });
+}
+let appBooted = false;
+function onAuthenticated(session){
+  document.getElementById('loginGate').style.display = 'none';
+  document.getElementById('appRoot').style.display = '';
+  const userLabel = document.getElementById('loggedUserLabel');
+  if (userLabel) userLabel.textContent = session.user.email || '';
+  if (!appBooted){ appBooted = true; bootAppData(); }
+}
+function showLoginGate(){
+  document.getElementById('loginGate').style.display = 'flex';
+  document.getElementById('appRoot').style.display = 'none';
+}
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('loginEmail').value.trim();
+  const senha = document.getElementById('loginSenha').value;
+  const errEl = document.getElementById('loginError');
+  const btn = document.getElementById('loginSubmitBtn');
+  errEl.style.display = 'none';
+  btn.disabled = true; btn.textContent = 'Entrando...';
+  try {
+    const { error } = await sb.auth.signInWithPassword({ email, password: senha });
+    if (error){
+      errEl.textContent = error.message === 'Invalid login credentials'
+        ? 'E-mail ou senha incorretos.'
+        : ('Erro ao entrar: ' + error.message);
+      errEl.style.display = '';
+    }
+  } catch(e){
+    errEl.textContent = 'Não foi possível conectar ao serviço de login. Tente novamente.';
+    errEl.style.display = '';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Entrar';
+  }
+});
+document.getElementById('btnLogout').addEventListener('click', async () => {
+  if (!supabaseReady) return;
+  await sb.auth.signOut();
+});
+initAuthGate();
 
 function loadDismissed(){
   try { return JSON.parse(localStorage.getItem(DISMISSED_KEY) || '[]'); } catch(e){ return []; }
