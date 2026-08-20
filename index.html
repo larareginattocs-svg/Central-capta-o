@@ -437,6 +437,7 @@ table.opp-table tr:hover td { background: var(--gray-50); }
           <tr>
             <th data-sort="titulo">Oportunidade</th>
             <th data-sort="tipo">Tipo</th>
+            <th>Site</th>
             <th data-sort="financiador">Financiador</th>
             <th data-sort="dataLimite">Prazo</th>
             <th data-sort="valor">Valor (R$)</th>
@@ -1131,6 +1132,20 @@ function inscricaoLink(o, label){
   }
   return `<span style="color:var(--gray-600);">${escapeHtml(val)}</span>`;
 }
+// Mostra o domínio do site de origem (campo "link", a fonte/notícia de onde a
+// oportunidade foi tirada) como link curto, em vez da URL completa.
+function siteLink(url){
+  const val = (url || '').trim();
+  if (!val) return `<span style="color:var(--gray-400);">—</span>`;
+  let host = val;
+  try {
+    host = new URL(/^https?:\/\//i.test(val) ? val : ('https://' + val)).hostname.replace(/^www\./, '');
+  } catch(e){ /* mantém o valor original se não for uma URL válida */ }
+  if (/^https?:\/\//i.test(val)) {
+    return `<a href="${escapeAttr(val)}" target="_blank" style="font-size:12px;" title="${escapeAttr(val)}">${escapeHtml(host)} ↗</a>`;
+  }
+  return `<span style="color:var(--gray-600);font-size:12px;">${escapeHtml(host)}</span>`;
+}
 function deadlineBadge(dstr, verificado){
   const dl = daysUntil(dstr);
   const unverifiedTag = verificado === false ? `<span class="unverified-tag" title="Prazo não confirmado na fonte oficial — verificar antes de priorizar">⚠ não confirmado</span>` : '';
@@ -1378,6 +1393,7 @@ function renderList(){
     <tr>
       <td><strong>${escapeHtml(o.titulo)}</strong>${o.link ? ` <a href="${escapeAttr(o.link)}" target="_blank" style="font-size:11px;">↗</a>` : ''}<br>${o.area ? `<span class="badge ${areaClass(o.area)}" style="margin-top:3px;display:inline-block;">${escapeHtml(o.area)}</span>` : ''} <span style="color:var(--gray-400);font-size:11.5px;">${o.regiao || ''}</span>${o.resumo ? `<br><span style="color:var(--gray-500);font-size:11.5px;">${escapeHtml(o.resumo)}</span>` : ''}</td>
       <td><span class="badge badge-tipo">${o.tipo}</span></td>
+      <td>${siteLink(o.link)}</td>
       <td>${escapeHtml(o.financiador || '—')}</td>
       <td>${deadlineBadge(o.limite, o.prazoVerificado)}</td>
       <td>${fmtMoney(o.valor)}${o.checklist && o.checklist.length ? `<br>${checklistMini(o)}` : ''}</td>
