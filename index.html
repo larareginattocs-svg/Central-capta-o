@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -2378,7 +2377,8 @@ function importFromCSV(text){
     return;
   }
   const today = new Date().toISOString().slice(0,10);
-  let importadas = 0, ignoradas = 0, avisos = [];
+  let importadas = 0, ignoradas = 0, duplicadas = 0, avisos = [];
+  const duplicadasTitulos = [];
   const novasOpps = [];
   for (let r = 1; r < rows.length; r++){
     const cells = rows[r];
@@ -2389,6 +2389,13 @@ function importFromCSV(text){
     const fluxoContinuoRaw = get('fluxoContinuo').toLowerCase();
     const fluxoContinuo = ['sim','true','1','yes'].includes(fluxoContinuoRaw);
     if (!titulo || (!limite && !fluxoContinuo)){ ignoradas++; continue; }
+    // Checagem de duplicidade: compara com o que já está na lista E com o que
+    // já foi importado nesta mesma leva do CSV, usando a mesma lógica de
+    // similaridade da aba Novidades (título parecido + financiador igual, ou
+    // título quase idêntico).
+    const candidato = { titulo, financiador: get('financiador') };
+    const jaExiste = state.opps.some(o => isSameOpportunity(candidato, o)) || novasOpps.some(o => isSameOpportunity(candidato, o));
+    if (jaExiste){ duplicadas++; duplicadasTitulos.push(titulo); continue; }
     let tipo = get('tipo') || 'Outro';
     if (!VALID_TIPOS.includes(tipo)){ avisos.push(`Tipo "${tipo}" não reconhecido em "${titulo}" — importado como "Outro".`); tipo = 'Outro'; }
     let area = get('area') || 'Outro';
@@ -2431,6 +2438,7 @@ function importFromCSV(text){
   novasOpps.forEach(o => syncUpsert(o));
   let msg = `Importação concluída: ${importadas} oportunidade(s) adicionada(s).`;
   if (ignoradas) msg += ` ${ignoradas} linha(s) ignorada(s) por faltar título ou prazo.`;
+  if (duplicadas) msg += ` ${duplicadas} linha(s) ignorada(s) por parecer duplicada de algo que já está na sua lista: ${duplicadasTitulos.slice(0,5).join('; ')}${duplicadasTitulos.length > 5 ? '…' : ''}`;
   if (avisos.length) msg += `\n\nAvisos:\n${avisos.slice(0,5).join('\n')}`;
   alert(msg);
 }
