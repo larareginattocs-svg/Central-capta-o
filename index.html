@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -289,6 +290,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .deadline-soon { color: var(--amber); }
 .deadline-ok { color: var(--gray-500); }
 .deadline-expired { color: var(--gray-400); text-decoration: line-through; }
+.deadline-continuo { color: var(--blue); }
 .unverified-tag { display:inline-block; font-size:10.5px; font-weight:700; color:var(--amber); background:#fef3c7; border-radius:5px; padding:1px 5px; margin-left:5px; white-space:nowrap; }
 
 .row-actions { display: flex; gap: 6px; }
@@ -719,11 +721,15 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
           <input type="date" id="f_abertura">
         </div>
         <div>
-          <label>Data limite *</label>
+          <label id="f_limite_label">Data limite *</label>
           <input type="date" id="f_limite" required>
           <label style="display:flex;align-items:center;gap:6px;font-weight:400;margin-top:6px;">
             <input type="checkbox" id="f_prazoVerificado" style="width:auto;">
             Prazo confirmado na fonte oficial
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-weight:400;margin-top:6px;">
+            <input type="checkbox" id="f_fluxoContinuo" style="width:auto;">
+            Fluxo contínuo / sem prazo fixo
           </label>
         </div>
 
@@ -1304,13 +1310,14 @@ function daysUntil(dateStr){
 // data de hoje. Itens sem prazo cadastrado (limite vazio) nunca são
 // considerados encerrados automaticamente.
 function isEncerrada(o){
+  if (o.fluxoContinuo) return false;
   const d = daysUntil(o.limite);
   return d !== null && d < 0;
 }
 
 function priorityOf(o){
   const aderScore = { 'Muito Alta':4, 'Alta':3, 'Média':2, 'Baixa':1 }[o.aderencia] || 1;
-  const dl = daysUntil(o.limite);
+  const dl = o.fluxoContinuo ? null : daysUntil(o.limite);
   let urgScore = 0;
   if (dl !== null){
     if (dl < 0) urgScore = -2;
@@ -1359,9 +1366,10 @@ function siteLink(url){
   }
   return `<span style="color:var(--gray-600);font-size:12px;">${escapeHtml(host)}</span>`;
 }
-function deadlineBadge(dstr, verificado){
-  const dl = daysUntil(dstr);
+function deadlineBadge(dstr, verificado, fluxoContinuo){
   const unverifiedTag = verificado === false ? `<span class="unverified-tag" title="Prazo não confirmado na fonte oficial — verificar antes de priorizar">⚠ não confirmado</span>` : '';
+  if (fluxoContinuo) return `<span class="deadline-tag deadline-continuo" title="Sem prazo fixo — aceita propostas continuamente">Fluxo contínuo</span>${unverifiedTag}`;
+  const dl = daysUntil(dstr);
   if (dl === null) return `<span class="deadline-tag deadline-ok">—</span>${unverifiedTag}`;
   if (dl < 0) return `<span class="deadline-tag deadline-expired">${fmtDate(dstr)} (encerrado)</span>${unverifiedTag}`;
   if (dl <= 7) return `<span class="deadline-tag deadline-urgent">${fmtDate(dstr)} · ${dl}d</span>${unverifiedTag}`;
@@ -1502,7 +1510,7 @@ function sortRows(rows){
 function renderDashboard(){
   const opps = state.opps;
   const open = opps.filter(o => OPEN_STATUSES.includes(o.status));
-  const near = open.filter(o => { const d = daysUntil(o.limite); return d !== null && d >= 0 && d <= 15; });
+  const near = open.filter(o => { if (o.fluxoContinuo) return false; const d = daysUntil(o.limite); return d !== null && d >= 0 && d <= 15; });
   const emAndamento = opps.filter(o => o.status === 'Em Elaboração' || o.status === 'Submetida');
   const aprovadas = opps.filter(o => o.status === 'Aprovada');
   const potencial = open.reduce((s,o) => s + (Number(o.valor)||0), 0);
@@ -1616,7 +1624,7 @@ function rowMini(o){
       ${o.area ? `<span class="badge ${areaClass(o.area)}">${escapeHtml(o.area)}</span>` : ''}
       <span class="badge ${statusClass(o.status)}">${o.status}</span>
       <span class="badge ${prioridadeClass(priorityOf(o))}">Prioridade ${priorityOf(o)}</span>
-      &nbsp; ${deadlineBadge(o.limite, o.prazoVerificado)} &nbsp; ${fmtMoney(o.valor)} ${checklistMini(o)}
+      &nbsp; ${deadlineBadge(o.limite, o.prazoVerificado, o.fluxoContinuo)} &nbsp; ${fmtMoney(o.valor)} ${checklistMini(o)}
     </div>
     <div class="kmeta" style="margin-top:6px;" onclick="event.stopPropagation();">${inscricaoLink(o)}</div>
   </div>`;
@@ -1647,7 +1655,7 @@ function oppRowHtml(o){
       <td><span class="badge badge-tipo">${o.tipo}</span></td>
       <td>${siteLink(o.link)}</td>
       <td>${escapeHtml(o.financiador || '—')}</td>
-      <td>${deadlineBadge(o.limite, o.prazoVerificado)}</td>
+      <td>${deadlineBadge(o.limite, o.prazoVerificado, o.fluxoContinuo)}</td>
       <td>${fmtMoney(o.valor)}${o.checklist && o.checklist.length ? `<br>${checklistMini(o)}` : ''}</td>
       <td><span class="badge ${aderenciaClass(o.aderencia)}">${o.aderencia}</span></td>
       <td><span class="badge ${prioridadeClass(priorityOf(o))}">${priorityOf(o)}</span></td>
@@ -1681,7 +1689,7 @@ function renderKanban(){
           <div class="kt">${escapeHtml(o.titulo)}</div>
           ${o.resumo ? `<div class="kmeta">${escapeHtml(o.resumo)}</div>` : ''}
           <div class="kmeta">${o.tipo}${o.area ? ` · <span class="badge ${areaClass(o.area)}" style="padding:1px 6px;">${escapeHtml(o.area)}</span>` : ''}</div>
-          <div class="kmeta">${deadlineBadge(o.limite, o.prazoVerificado)}</div>
+          <div class="kmeta">${deadlineBadge(o.limite, o.prazoVerificado, o.fluxoContinuo)}</div>
           <div class="kmeta">${fmtMoney(o.valor)} · <span class="badge ${prioridadeClass(priorityOf(o))}" style="padding:1px 6px;">${priorityOf(o)}</span> ${checklistMini(o)}</div>
           <div class="kmeta" style="margin-top:6px;" onclick="event.stopPropagation();">${inscricaoLink(o)}</div>
         </div>`).join('') || '<div style="color:var(--gray-400);font-size:12px;padding:6px;">Vazio</div>'}
@@ -1697,7 +1705,7 @@ const CAL_WEEKDAYS = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 function opsByDate(){
   const byDate = {};
   state.opps.forEach(o => {
-    if (!o.limite) return;
+    if (!o.limite || o.fluxoContinuo) return;
     if (!byDate[o.limite]) byDate[o.limite] = [];
     byDate[o.limite].push(o);
   });
@@ -1884,7 +1892,7 @@ window.importSuggestion = function(encTitle){
   const today = new Date().toISOString().slice(0,10);
   const novaOpp = {
     id: uid(), titulo: s.titulo, resumo: s.resumo || '', tipo: s.tipo, financiador: s.financiador, area: s.area, regiao: s.regiao,
-    abertura: s.abertura || '', limite: s.limite, prazoVerificado: s.prazoVerificado === true, valor: s.valor || 0, contrapartida: s.contrapartida || 'Não',
+    abertura: s.abertura || '', limite: s.limite, prazoVerificado: s.prazoVerificado === true, fluxoContinuo: s.fluxoContinuo === true, valor: s.valor || 0, contrapartida: s.contrapartida || 'Não',
     aderencia: s.aderencia, status: 'Identificada', responsavel: '', responsavelEmail: '', link: s.link || '', inscricao: s.inscricao || '', notas: s.notas || '',
     checklist: [], comentarios: [],
     criadoEm: today, atualizadoEm: today,
@@ -1981,6 +1989,18 @@ function renderAll(){
 /* ---------- Modal / CRUD ---------- */
 const overlay = document.getElementById('overlay');
 const form = document.getElementById('oppForm');
+// "Fluxo contínuo / sem prazo fixo": quando marcado, a data limite vira
+// opcional (só como referência) e deixa de contar como prazo real para
+// prioridade, calendário, alertas de vencimento e a aba "Encerrados".
+function applyFluxoContinuoUI(){
+  const isContinuo = document.getElementById('f_fluxoContinuo').checked;
+  const limiteInput = document.getElementById('f_limite');
+  const limiteLabel = document.getElementById('f_limite_label');
+  limiteInput.required = !isContinuo;
+  limiteLabel.textContent = isContinuo ? 'Data de referência (opcional)' : 'Data limite *';
+}
+document.getElementById('f_fluxoContinuo').addEventListener('change', applyFluxoContinuoUI);
+
 let lastFocusEl = null;
 function focusModalFirstField(){
   lastFocusEl = document.activeElement;
@@ -2076,6 +2096,7 @@ function openNew(){
   document.getElementById('btnDelete').style.display = 'none';
   form.reset();
   document.getElementById('f_id').value = '';
+  applyFluxoContinuoUI();
   document.getElementById('historicoBlock').style.display = 'none';
   setAderenciaChecklist({ area:false, regiao:false, publico:false, elegivel:false }, null);
   editingChecklist = [];
@@ -2144,6 +2165,8 @@ window.openEdit = function(id){
   document.getElementById('f_abertura').value = o.abertura || '';
   document.getElementById('f_limite').value = o.limite || '';
   document.getElementById('f_prazoVerificado').checked = o.prazoVerificado === true;
+  document.getElementById('f_fluxoContinuo').checked = o.fluxoContinuo === true;
+  applyFluxoContinuoUI();
   document.getElementById('f_valor').value = o.valor || '';
   document.getElementById('f_contrapartida').value = o.contrapartida || 'Não';
   setAderenciaChecklist(o.aderenciaCriterios, o.aderencia || 'Média');
@@ -2180,6 +2203,7 @@ form.addEventListener('submit', (e) => {
     abertura: document.getElementById('f_abertura').value,
     limite: document.getElementById('f_limite').value,
     prazoVerificado: document.getElementById('f_prazoVerificado').checked,
+    fluxoContinuo: document.getElementById('f_fluxoContinuo').checked,
     valor: Number(document.getElementById('f_valor').value) || 0,
     contrapartida: document.getElementById('f_contrapartida').value,
     aderencia: document.getElementById('f_aderencia').value,
@@ -2238,11 +2262,15 @@ function opportunitiesForExport(){
   const algumFiltroAtivo = FILTER_IDS.some(id => document.getElementById(id).value) || state.categoria !== 'Todos';
   return algumFiltroAtivo ? sortRows(getFiltered()) : state.opps;
 }
-const CSV_COLS = ['titulo','resumo','tipo','financiador','area','regiao','abertura','limite','prazoVerificado','valor','contrapartida','aderencia','status','responsavel','responsavelEmail','link','inscricao','notas'];
+const CSV_COLS = ['titulo','resumo','tipo','financiador','area','regiao','abertura','limite','prazoVerificado','fluxoContinuo','valor','contrapartida','aderencia','status','responsavel','responsavelEmail','link','inscricao','notas'];
 document.getElementById('btnExport').addEventListener('click', () => {
   const rows = opportunitiesForExport();
   const header = CSV_COLS.join(';');
-  const lines = rows.map(o => CSV_COLS.map(c => csvEsc(c === 'prazoVerificado' ? (o.prazoVerificado ? 'Sim' : 'Não') : o[c])).join(';'));
+  const lines = rows.map(o => CSV_COLS.map(c => csvEsc(
+    c === 'prazoVerificado' ? (o.prazoVerificado ? 'Sim' : 'Não') :
+    c === 'fluxoContinuo' ? (o.fluxoContinuo ? 'Sim' : 'Não') :
+    o[c]
+  )).join(';'));
   const csv = '﻿' + [header, ...lines].join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
@@ -2358,7 +2386,9 @@ function importFromCSV(text){
     const get = (col) => (idx[col] !== undefined ? (cells[idx[col]] || '').trim() : '');
     const titulo = get('titulo');
     const limite = get('limite');
-    if (!titulo || !limite){ ignoradas++; continue; }
+    const fluxoContinuoRaw = get('fluxoContinuo').toLowerCase();
+    const fluxoContinuo = ['sim','true','1','yes'].includes(fluxoContinuoRaw);
+    if (!titulo || (!limite && !fluxoContinuo)){ ignoradas++; continue; }
     let tipo = get('tipo') || 'Outro';
     if (!VALID_TIPOS.includes(tipo)){ avisos.push(`Tipo "${tipo}" não reconhecido em "${titulo}" — importado como "Outro".`); tipo = 'Outro'; }
     let area = get('area') || 'Outro';
@@ -2380,6 +2410,7 @@ function importFromCSV(text){
       abertura: get('abertura'),
       limite,
       prazoVerificado,
+      fluxoContinuo,
       valor: Number(get('valor').replace(/[^\d.-]/g, '')) || 0,
       contrapartida: get('contrapartida') || 'Não',
       responsavel: get('responsavel'),
